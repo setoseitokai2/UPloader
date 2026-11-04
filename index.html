@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Media Management Dashboard</title>
+  <style>
+    :root { --primary: #00d4ff; --bg: #0a0e1a; --card-bg: #1a2035; --text: #ffffff; }
+    body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; }
+    .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 20px; margin-bottom: 30px; }
+    .header h1 { margin: 0; color: var(--primary); }
+    .btn { background: linear-gradient(135deg, var(--primary), #7b8cde); border: none; padding: 10px 20px; border-radius: 8px; color: var(--bg); font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 14px; }
+    .btn:hover { opacity: 0.8; }
+    .btn-delete { background: #ff4d4d; color: white; }
+    .btn-delete:hover { background: #ff1a1a; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+    .card { background: var(--card-bg); border-radius: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; }
+    .preview { height: 200px; background: #000; display: flex; align-items: center; justify-content: center; position: relative; }
+    .preview img, .preview video { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .info { padding: 15px; text-align: center; flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between; }
+    .name { font-size: 14px; margin-bottom: 15px; color: rgba(255,255,255,0.8); word-break: break-all; }
+    .actions { display: flex; gap: 10px; justify-content: center; }
+    .loader { text-align: center; color: var(--primary); font-size: 18px; margin-top: 50px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Media Dashboard</h1>
+    <button class="btn" onclick="setToken()">🔑 管理者設定 (トークン登録)</button>
+  </div>
+  
+  <div id="loading" class="loader">ファイルを読み込み中...</div>
+  <div class="grid" id="gallery"></div>
+
+  <script>
+    // ==========================================
+    // ⚙️ 設定 (ご自身の情報に書き換えてください)
+    // ==========================================
+    const GITHUB_USER = 'your-github-id'; // ★書き換え
+    const GITHUB_REPO = 'ar-media';       // ★書き換え
+    // ==========================================
+
+    const apiUrl = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents`;
+    
+    // トークンをブラウザに保存・取得する処理
+    function getToken() { return localStorage.getItem('gh_token'); }
+    function setToken() {
+      const currentToken = getToken() || '';
+      const token = prompt('GitHubのFine-grained PATを入力してください。\n※このブラウザにのみ安全に保存され、削除機能に利用されます。', currentToken);
+      if (token !== null) {
+        localStorage.setItem('gh_token', token.trim());
+        alert('トークンを保存しました。');
+        loadFiles(); // 再読み込み（トークンありなら制限解除されるため）
+      }
+    }
+
+    // 共通のフェッチ処理（トークンがあれば付与）
+    async function fetchApi(url, options = {}) {
+      const token = getToken();
+      if (token) {
+        options.headers = { ...options.headers, 'Authorization': `Bearer ${token}` };
+      }
+      const res = await fetch(url, options);
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    // ファイル一覧を取得して描画
+    async function loadFiles() {
+      const gallery = document.getElementById('gallery');
+      const loading = document.getElementById('loading');
+      gallery.innerHTML = '';
+      loading.style.display = 'block';
+
+      try {
+        const files = await fetchApi(apiUrl);
+        loading.style.display = 'none';
+
+        files.forEach(file => {
+          if (file.name === 'index.html' || file.type !== 'file') return; // 管理画面自体やフォルダは除外
+
+          const ext = file.name.split('.').pop().toLowerCase();
+          const publicUrl = `https://${GITHUB_USER}.github.io/${GITHUB_REPO}/${file.name}`;
+          let previewHtml = `<div style="color:#666;">Preview unavaliable</div>`;
+
+          if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) {
+            previewHtml = `<img src="${publicUrl}" alt="${file.name}" loading="lazy">`;
+          } else if (['mp4', 'webm'].includes(ext)) {
+            previewHtml = `<video src="${publicUrl}" controls muted></video>`;
+          } else if (['mp3', 'wav', 'm4a'].includes(ext)) {
+            previewHtml = `<audio src="${publicUrl}" controls style="width:90%;"></audio>`;
+          }
+
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `
+            <div class="preview">${previewHtml}</div>
+            <div class="info">
+              <div class="name">${file.name}</div>
+              <div class="actions">
+                <button class="btn" onclick="copyUrl('${publicUrl}')">🔗 コピー</button>
+                <button class="btn btn-delete" onclick="deleteFile('${file.name}', '${file.sha}')">🗑 削除</button>
+              </div>
+            </div>
+          `;
+          gallery.appendChild(card);
+        });
+      } catch (e) {
+        loading.innerHTML = `読み込みエラー<br><span style="font-size:14px;color:red;">${e.message}</span>`;
+      }
+    }
+
+    // URLをクリップボードにコピー
+    function copyUrl(url) {
+      navigator.clipboard.writeText(url).then(() => alert('URLをコピーしました！'));
+    }
+
+    // ファイルを削除
+    async function deleteFile(fileName, sha) {
+      if (!getToken()) {
+        alert('削除機能を使うには、右上の「管理者設定」からトークンを登録してください。');
+        return;
+      }
+      if (!confirm(`「${fileName}」を完全に削除しますか？\n※この操作は取り消せません。`)) return;
+
+      try {
+        await fetchApi(`${apiUrl}/${fileName}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: `Delete ${fileName} via Web UI`,
+            sha: sha
+          })
+        });
+        alert('削除しました。');
+        loadFiles(); // 削除後に一覧を再読み込み
+      } catch (e) {
+        alert('削除エラー: トークンの権限（Read and write）を確認してください。\n' + e.message);
+      }
+    }
+
+    // 初回読み込み
+    loadFiles();
+  </script>
+</body>
+</html>
